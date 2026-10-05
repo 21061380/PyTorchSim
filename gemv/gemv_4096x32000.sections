@@ -1,0 +1,16 @@
+
+/tmp/gemv_4096x32000.o:	file format elf64-littleriscv
+
+Sections:
+Idx Name              Size     VMA              Type
+  0                   00000000 0000000000000000 
+  1 .strtab           000000cb 0000000000000000 
+  2 .text             0000045a 0000000000000000 TEXT
+  3 .rela.text        000000d8 0000000000000000 
+  4 .stack_sizes      00000014 0000000000000000 
+  5 .rela.stack_sizes 00000030 0000000000000000 
+  6 .note.GNU-stack   00000000 0000000000000000 
+  7 .riscv.attributes 000000cf 0000000000000000 
+  8 .eh_frame         00000078 0000000000000000 DATA
+  9 .rela.eh_frame    00000090 0000000000000000 
+ 10 .symtab           00000228 0000000000000000 

@@ -4,6 +4,7 @@ import dataclasses
 from torch._inductor.autotune_process import TensorMeta
 from torch._inductor.codecache import get_hash, write
 from PyTorchSimFrontend import extension_config
+from PyTorchSimFrontend import extension_codecache
 from Simulator.simulator import TOGSimulator
 
 from typing import (
@@ -16,11 +17,13 @@ from typing import (
 )
 
 # FIXME. Avoid circular import
+
 def hash_prefix(hash_value):
     return hash_value[1:12]
 
 def get_write_path(src_code):
-    return os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, hash_prefix(get_hash(src_code.strip())))
+    from PyTorchSimFrontend.extension_codecache import get_write_path as cache_get_write_path
+    return cache_get_write_path(src_code)
 
 @dataclasses.dataclass
 class MLIRBenchmarkRequest():
@@ -57,9 +60,20 @@ class MLIRBenchmarkRequest():
         from PyTorchSimFrontend.extension_codecache import CustomAsyncCompile
         custom_async_compile = CustomAsyncCompile()
 
-        # Check already cached result.
-        write_path = get_write_path(self.source_code)
-        key,  _ = write(self.source_code, "mlir", specified_dir=write_path)
+        from PyTorchSimFrontend.extension_codecache import cache_hash_extra
+        cache_extra = cache_hash_extra(
+            vlen=self.extra_args.get("vlen", "unset"),
+            vectorlane_size=self.extra_args.get("vector_lane", "unset"),
+        )
+        # The autotune helper historically uses the shared source path.  Keep
+        # it synchronized with the backend identity, including target geometry.
+        write_path = extension_codecache.get_write_path(self.source_code, extra=cache_extra)
+        key, _ = write(
+            self.source_code,
+            "mlir",
+            extra=cache_extra,
+            specified_dir=write_path,
+        )
         result_dir = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, hash_prefix(key), "togsim_result")
 
         # Find the most recent .log file in the result directory

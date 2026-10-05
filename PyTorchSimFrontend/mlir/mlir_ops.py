@@ -5,6 +5,16 @@ import warnings
 from torch._inductor.codegen import common
 from torch._inductor.virtualized import V, _ops as ops
 from . import mlir_common
+from PyTorchSimFrontend import extension_config
+
+
+def _reject_unsafe_sleef_path():
+    """Prevent fixed-vector MLIR calls from masquerading as SLEEF RVV calls."""
+    if extension_config.CONFIG_SLEEF_RVV:
+        raise RuntimeError(
+            "TORCHSIM_SLEEF_RVV is not usable until the pointer-based RVV "
+            "wrapper is installed; direct fixed-vector SLEEF calls are disabled"
+        )
 
 warnings.filterwarnings('ignore', message='undefined OpHandler\\..*, please add missing op schema')
 
@@ -313,6 +323,7 @@ class ExtensionOverrides(common.OpOverrides):
 
     @staticmethod
     def exp(operand, *args, **kwargs):
+        _reject_unsafe_sleef_path()
         # Check scalar
         op_type = V.kernel.var_info[operand]
         if op_type[0] == 1:
@@ -395,6 +406,7 @@ class ExtensionOverrides(common.OpOverrides):
 
     @staticmethod
     def cos(operand, *args, **kwargs):
+        _reject_unsafe_sleef_path()
         op_type = V.kernel.var_info[operand]
 
         # Check scalar
@@ -416,6 +428,7 @@ class ExtensionOverrides(common.OpOverrides):
 
     @staticmethod
     def sin(operand, *args, **kwargs):
+        _reject_unsafe_sleef_path()
         op_type = V.kernel.var_info[operand]
 
         # Check scalar
@@ -448,6 +461,7 @@ class ExtensionOverrides(common.OpOverrides):
 
     @staticmethod
     def erf(operand, *args, **kwargs):
+        _reject_unsafe_sleef_path()
         # Check scalar
         op_type = V.kernel.var_info[operand]
         if op_type[0] == 1:
@@ -471,6 +485,7 @@ class ExtensionOverrides(common.OpOverrides):
 
     @staticmethod
     def tanh(operand, *args, **kwargs):
+        _reject_unsafe_sleef_path()
         op_type = V.kernel.var_info[operand]
 
         # Check scalar

@@ -15,5 +15,20 @@
     "repository": "PSAL-POSTECH/riscv-isa-sim",
     "release_tag": "v1.0.1",
     "asset_name": "spike-release.tar.gz"
+  },
+  "sleef": {
+    "repository": "SLEEForg/SLEEF",
+    "release_tag": "3.9.0",
+    "commit": "906ca7512ee483296780a81a21b9ca715d40dfe1",
+    "purpose": "RVV source audit; build requires RVV intrinsic revision >= 12.0"
+  },
+  "riscv_toolchain": {
+    "repository": "riscv-collab/riscv-gnu-toolchain",
+    "release_tag": "2024.12.16",
+    "asset_name": "riscv64-elf-ubuntu-22.04-gcc-nightly-2024.12.16-nightly.tar.xz",
+    "sha256": "17c32b516299d37c4652ee09750ad2c13598b916f813f93b44fd201d35004032",
+    "commit": "43536acae8791de5fc93acad51d0c03dda9f903e",
+    "target": "riscv64-unknown-elf",
+    "rvv": "rv64gcv_zba_zbb_zbs/lp64d"
   }
 }

@@ -39,6 +39,31 @@ jobs:
           if [ -z "$PYTORCH_IMAGE" ]; then echo "thirdparty/github-releases.json: pytorch_image is required" >&2; exit 1; fi
           echo "PYTORCH_IMAGE=$PYTORCH_IMAGE" >> "$GITHUB_ENV"
 
+      - name: Resolve prebuilt RISC-V toolchain
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          item = json.loads(
+              Path("thirdparty/github-releases.json").read_text()
+          )["riscv_toolchain"]
+          required = ("repository", "release_tag", "asset_name", "sha256")
+          missing = [key for key in required if not item.get(key)]
+          if missing:
+              raise SystemExit(
+                  "riscv_toolchain manifest fields are missing: " + ", ".join(missing)
+              )
+          url = (
+              f"https://github.com/{item['repository']}/releases/download/"
+              f"{item['release_tag']}/{item['asset_name']}"
+          )
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              env.write(f"RISCV_TOOLCHAIN_URL={url}\n")
+              env.write(f"RISCV_TOOLCHAIN_SHA256={item['sha256']}\n")
+          PY
+
       - name: Thirdparty pin
         id: pin
         run: |
@@ -74,6 +99,8 @@ jobs:
             GEM5_ASSET_ID=${{ env.GEM5_ASSET_ID }}
             LLVM_ASSET_ID=${{ env.LLVM_ASSET_ID }}
             SPIKE_ASSET_ID=${{ env.SPIKE_ASSET_ID }}
+            RISCV_TOOLCHAIN_URL=${{ env.RISCV_TOOLCHAIN_URL }}
+            RISCV_TOOLCHAIN_SHA256=${{ env.RISCV_TOOLCHAIN_SHA256 }}
           tags: ${{ env.BASE_IMAGE }}
 
   build-and-test:

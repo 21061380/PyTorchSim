@@ -15,12 +15,35 @@ from Simulator.simulator import FunctionalSimulator, CycleSimulator, TOGSimulato
 logger = extension_config.setup_logger()
 
 LOCK_TIMEOUT = 600
+CACHE_BACKEND_VERSION = "math-backend-v2"
+
+
+def cache_hash_extra(**compile_inputs):
+    """Return compiler inputs that must invalidate generated artifacts."""
+    values = {
+        "backend": os.environ.get("TORCHSIM_MATH_BACKEND", CACHE_BACKEND_VERSION),
+        "sleef_enabled": os.environ.get("TORCHSIM_SLEEF_RVV", "0"),
+        "sleef_version": os.environ.get("TORCHSIM_SLEEF_VERSION", "unset"),
+        "sleef_variant": os.environ.get("TORCHSIM_SLEEF_RVV_VARIANT", "rvvm1"),
+        "sleef_lib": os.environ.get("TORCHSIM_SLEEF_RVV_LIB", "unset"),
+        "llvm_path": extension_config.CONFIG_TORCHSIM_LLVM_PATH,
+        "riscv_march": os.environ.get("TORCHSIM_RISCV_MARCH", "rv64gcv"),
+        "riscv_mabi": os.environ.get("TORCHSIM_RISCV_MABI", "default"),
+        "sleef_source": os.environ.get("TORCHSIM_SLEEF_SOURCE", "unset"),
+    }
+    values.update({key: str(value) for key, value in compile_inputs.items()})
+    return "|".join(f"{key}={values[key]}" for key in sorted(values))
 
 def hash_prefix(hash_value):
     return hash_value[1:12]
 
-def get_write_path(src_code):
-    return os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, hash_prefix(get_hash(src_code.strip())))
+def get_write_path(src_code, extra=None):
+    if extra is None:
+        extra = cache_hash_extra()
+    return os.path.join(
+        extension_config.CONFIG_TORCHSIM_DUMP_PATH,
+        hash_prefix(get_hash(src_code.strip(), extra=extra)),
+    )
 
 
 def get_lock_path(write_path):
@@ -156,8 +179,14 @@ class MLIRCodeCache:
              spad_info=None, origins=None, silent_mode=False, **kwargs):
         vlen = kwargs['vlen']
         vlenb = vlen // 8
-        write_path = get_write_path(source_code)
-        key, input_path = write(source_code, "mlir", specified_dir=write_path)
+        cache_extra = cache_hash_extra(vlen=vlen, vectorlane_size=vectorlane_size)
+        write_path = get_write_path(source_code, extra=cache_extra)
+        key, input_path = write(
+            source_code,
+            "mlir",
+            extra=cache_extra,
+            specified_dir=write_path,
+        )
         new_input_path = os.path.splitext(input_path)[0]
         raw_tog_path = new_input_path + "_tog.py"
         tog_path = os.path.join(write_path, "tile_graph.onnx")
@@ -271,7 +300,7 @@ class CustomAsyncCompile(AsyncCompile):
         autotune = kwargs.get('autotune', False)
         def task():
             key = MLIRCodeCache.load(source_code,
-                                          valdiation_wrapper_name=self.validation_binary_name,
+                                          validation_wrapper_name=self.validation_wrapper_name,
                                           validation_binary_name=self.validation_binary_name,
                                           arg_attributes=arg_attributes, vectorlane_size=vectorlane_size,
                                           tile_size=tile_size, spad_info=spad_info, origins=origins,

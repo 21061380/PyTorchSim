@@ -184,13 +184,41 @@ class MLIRKernelCallerCodeGen():
         main_obj_path = os.path.join(write_path, self.add_extention(wrapper_name, 'o'))
         kernel_obj_path = os.path.join(write_path, self.add_extention(llvm_name, 'o'))
 
-        main_compile = f'riscv64-unknown-elf-gcc -march=rv64gcv -c {main_path} -o {main_obj_path}'
+        main_compile_cmd = [
+            "riscv64-unknown-elf-gcc",
+            "-march=rv64gcv",
+            "-c", main_path,
+            "-o", main_obj_path,
+        ]
 
         target = os.path.join(write_path, binary_name)
-        link = f'riscv64-unknown-elf-gcc -march=rv64gcv {main_obj_path} {kernel_obj_path} -o {target} -lm {link_option}'
+        link_cmd = [
+            "riscv64-unknown-elf-gcc",
+            "-march=rv64gcv",
+            main_obj_path,
+            kernel_obj_path,
+            "-o", target,
+        ]
 
-        main_compile_cmd = shlex.split(main_compile)
-        link_cmd = shlex.split(link)
+        from PyTorchSimFrontend import extension_config
+        if extension_config.CONFIG_SLEEF_RVV:
+            sleef_lib = extension_config.CONFIG_SLEEF_RVV_LIB
+            if not sleef_lib:
+                raise RuntimeError(
+                    "TORCHSIM_SLEEF_RVV is enabled, but "
+                    "TORCHSIM_SLEEF_RVV_LIB is not set"
+                )
+            # Accept either a concrete archive/object or a directory containing
+            # libsleef.a.  Do not silently fall back to scalar libm in SLEEF mode.
+            if os.path.isdir(sleef_lib):
+                link_cmd.extend([f"-L{sleef_lib}", "-lsleef"])
+            else:
+                link_cmd.append(sleef_lib)
+        else:
+            link_cmd.append("-lm")
+
+        if link_option:
+            link_cmd.extend(shlex.split(link_option))
 
         try:
             subprocess.check_call(main_compile_cmd)
@@ -198,7 +226,7 @@ class MLIRKernelCallerCodeGen():
         except subprocess.CalledProcessError as e:
             print("Command failed with exit code", e.returncode)
             print("Error output:", e.output)
-            assert(0)
+            raise
 
     def parse_stack_sizes(self, file_path, vlenb=256):
         with open(file_path, 'r') as f:

@@ -36,11 +36,18 @@ RUN apt -y update && \
     python3-venv black libssl-dev libasan5 libubsan1 curl device-tree-compiler wget ninja-build && \
     pip install onnx matplotlib scikit-learn pydot tabulate flash_attn && pip install --user conan==1.56.0 cmake==3.26.4 && rm -rf /var/lib/apt/lists/*
 
-# Download RISC-V tool chain
-RUN wget https://github.com/riscv-collab/riscv-gnu-toolchain/releases/download/2023.12.14/riscv64-glibc-ubuntu-22.04-llvm-nightly-2023.12.14-nightly.tar.gz && \
-    wget https://github.com/riscv-collab/riscv-gnu-toolchain/releases/download/2023.12.14/riscv64-elf-ubuntu-20.04-llvm-nightly-2023.12.14-nightly.tar.gz && \
-    tar -zxvf riscv64-elf-ubuntu-20.04-llvm-nightly-2023.12.14-nightly.tar.gz && tar -zxvf riscv64-elf-ubuntu-20.04-llvm-nightly-2023.12.14-nightly.tar.gz && \
-    rm *.tar.gz
+# Build a pinned RISC-V bare-metal toolchain with the RVV intrinsic API
+# required by SLEEF 3.9.0. The official release is used instead of compiling
+# the toolchain from source inside the image.
+ARG RISCV_TOOLCHAIN_URL=https://github.com/riscv-collab/riscv-gnu-toolchain/releases/download/2024.12.16/riscv64-elf-ubuntu-22.04-gcc-nightly-2024.12.16-nightly.tar.xz
+ARG RISCV_TOOLCHAIN_SHA256
+RUN test -n "${RISCV_TOOLCHAIN_SHA256}" && \
+    wget -q "${RISCV_TOOLCHAIN_URL}" -O /tmp/riscv-toolchain.tar.xz && \
+    echo "${RISCV_TOOLCHAIN_SHA256}  /tmp/riscv-toolchain.tar.xz" | sha256sum -c - && \
+    mkdir -p /workspace && \
+    tar -xJf /tmp/riscv-toolchain.tar.xz -C /workspace && \
+    test -x /workspace/riscv/bin/riscv64-unknown-elf-gcc && \
+    rm -f /tmp/riscv-toolchain.tar.xz
 
 # Install torchsim dependency
 RUN apt install ninja-build && pip install onnx matplotlib && pip install --user conan==1.56.0 && pip install "transformers<4.44" && pip install diffusers==0.34.0
@@ -56,9 +63,35 @@ RUN python -m pip install -U pip setuptools wheel && \
 ENV RISCV=/workspace/riscv
 ENV PATH=$RISCV/bin:$PATH
 
+# Verify both the advertised intrinsic revision and a real RVV intrinsic.
+# Keep preprocessing in a file because x86 QEMU emulation has previously
+# crashed when this compiler was used in a pipeline.
+RUN set -eux; \
+    riscv64-unknown-elf-gcc \
+      -march=rv64gcv_zba_zbb_zbs -mabi=lp64d \
+      -dM -E -x c /dev/null > /tmp/riscv-macros.txt; \
+    intrinsic_revision="$(awk '$2 == "__riscv_v_intrinsic" { print $3 }' /tmp/riscv-macros.txt)"; \
+    test -n "$intrinsic_revision"; \
+    test "$intrinsic_revision" -ge 12000; \
+    printf '%s\n' \
+      '#include <stddef.h>' \
+      '#include <riscv_vector.h>' \
+      '' \
+      'vfloat32m1_t torchsim_rvv_smoke(const float *src, size_t n) {' \
+      '    size_t vl = __riscv_vsetvl_e32m1(n);' \
+      '    vfloat32m1_t values = __riscv_vle32_v_f32m1(src, vl);' \
+      '    return __riscv_vfadd_vf_f32m1(values, 1.0f, vl);' \
+      '}' > /tmp/rvv-intrinsic-smoke.c; \
+    riscv64-unknown-elf-gcc \
+      -march=rv64gcv_zba_zbb_zbs -mabi=lp64d -O2 \
+      -S /tmp/rvv-intrinsic-smoke.c -o /tmp/rvv-intrinsic-smoke.s; \
+    grep -Eq 'vsetvli|vle32\\.v|vfadd\\.v' /tmp/rvv-intrinsic-smoke.s; \
+    rm -f /tmp/riscv-macros.txt /tmp/rvv-intrinsic-smoke.c /tmp/rvv-intrinsic-smoke.s
+
 ARG GEM5_ASSET_ID
 ARG LLVM_ASSET_ID
 ARG SPIKE_ASSET_ID
+ARG SLEEF_COMMIT=906ca7512ee483296780a81a21b9ca715d40dfe1
 ENV PATH=$PATH:/root/.local/bin
 ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/opt/conda/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:$LD_LIBRARY_PATH
 
@@ -77,6 +110,14 @@ RUN curl -L -H "Accept: application/octet-stream" https://api.github.com/repos/P
 # Store RISC-V LLVM for TorchSim
 ENV TORCHSIM_LLVM_PATH=/riscv-llvm/bin
 ENV TORCHSIM_DIR=/workspace/PyTorchSim
+ENV TORCHSIM_SLEEF_SOURCE=/opt/sleef
+
+# Keep the audited SLEEF source reproducible. The RVV library is not built
+# here because the LLVM toolchain used by TorchSim is supplied separately,
+# while SLEEF 3.9.0 requires RVV intrinsic revision 12.0 for RVVM1.
+RUN git clone https://github.com/SLEEForg/SLEEF.git /opt/sleef && \
+    cd /opt/sleef && git checkout --detach ${SLEEF_COMMIT} && \
+    test "$(git rev-parse HEAD)" = "${SLEEF_COMMIT}"
 
 # Download Spike simulator
 RUN curl -L -H "Accept: application/octet-stream" https://api.github.com/repos/PSAL-POSTECH/riscv-isa-sim/releases/assets/${SPIKE_ASSET_ID} -o /tmp/spike-release.tar.gz && \

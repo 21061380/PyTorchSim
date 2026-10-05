@@ -42,6 +42,13 @@ CONFIG_TORCHSIM_TOG_HOST_LDFLAGS = _default_tog_host_ldflags()
 CONFIG_TORCHSIM_DUMP_MLIR_IR = int(os.environ.get("TORCHSIM_DUMP_MLIR_IR", default=False))
 CONFIG_TORCHSIM_DUMP_LLVM_IR = int(os.environ.get("TORCHSIM_DUMP_LLVM_IR", default=False))
 
+# SLEEF's RVV backend is experimental and must be explicitly enabled.  Keep
+# this opt-in so existing deployments continue to use the official MLIR math
+# lowering until a matching SLEEF library is installed.
+CONFIG_SLEEF_RVV = int(os.environ.get("TORCHSIM_SLEEF_RVV", "0"))
+CONFIG_SLEEF_RVV_LIB = os.environ.get("TORCHSIM_SLEEF_RVV_LIB", "")
+CONFIG_SLEEF_RVV_VARIANT = os.environ.get("TORCHSIM_SLEEF_RVV_VARIANT", "rvvm1")
+
 def __getattr__(name):
     # TOGSim config
     config_path = os.environ.get('TOGSIM_CONFIG',
