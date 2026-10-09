@@ -102,7 +102,7 @@ class MLIRConvCommonTemplate(MLIRTemplate):
             OUTPUT=Y,
             PADDING_H=self.padding[0],
             PADDING_W=self.padding[1],
-            VALIDATION_MODE=extension_config.pytorchsim_functional_mode,
+            VALIDATION_MODE=False,
             input_reorder=self.input_reorder
         )
         code = self._template_from_string(self.WRAPPER_TEMPLATE).render(**options)

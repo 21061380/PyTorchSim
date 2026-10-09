@@ -1,0 +1,11 @@
+num_cores: 1
+# Compiler-only target configuration.
+vpu_num_lanes: 128
+vpu_spad_size_kb_per_lane: 128
+vpu_vector_length_bits: 256
+
+codegen_mapping_strategy: heuristic
+codegen_external_mapping_file: ''
+codegen_autotune_max_retry: 10
+codegen_autotune_template_topk: 4
+codegen_compiler_optimization: all

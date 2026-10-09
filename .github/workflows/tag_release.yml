@@ -55,7 +55,7 @@ jobs:
             echo "ok=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Resolve GitHub release asset IDs
+      - name: Resolve LLVM release asset ID
         if: steps.exists.outputs.ok != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -70,9 +70,7 @@ jobs:
           push: true
           build-args: |
             PYTORCH_IMAGE=${{ env.PYTORCH_IMAGE }}
-            GEM5_ASSET_ID=${{ env.GEM5_ASSET_ID }}
             LLVM_ASSET_ID=${{ env.LLVM_ASSET_ID }}
-            SPIKE_ASSET_ID=${{ env.SPIKE_ASSET_ID }}
           tags: |
             ${{ env.BASE_IMAGE }}
             ${{ env.BASE_IMAGE_REPO }}:latest

@@ -385,12 +385,11 @@ _override_lowerings_npu(
     lambda *a, **_k: a and _tensor_args_all_npu(a[0]),
 )
 
-if extension_config.CONFIG_USE_TIMING_POOLING:
-    _override_lowerings_npu(
-        aten.max_pool2d_with_indices,
-        _mlir_custom_maxpool,
-        lambda *a, **_: bool(a) and _tensor_args_all_npu(a[0]),
-    )
+_override_lowerings_npu(
+    aten.max_pool2d_with_indices,
+    _mlir_custom_maxpool,
+    lambda *a, **_: bool(a) and _tensor_args_all_npu(a[0]),
+)
 
 _override_lowerings_npu(
     aten._scaled_dot_product_fused_attention_overrideable,

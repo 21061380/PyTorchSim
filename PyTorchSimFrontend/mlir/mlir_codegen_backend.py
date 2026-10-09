@@ -34,7 +34,6 @@ from PyTorchSimFrontend.mlir.mlir_autotune import MLIRBenchmarkRequest
 # Configure logger for mlir_codegen_backend module
 logger = extension_config.setup_logger()
 
-from Simulator.simulator import ProgressBar
 
 def reduction_init(reduction_type, dtype):
     if dtype in cpp.DTYPE_LOWP_FP:
@@ -103,8 +102,7 @@ class ExtensionWrapperCodegen(wrapper.PythonWrapperCodegen):
                 from torch import device, empty, empty_strided
                 from {extension_codecache.__name__} import CustomAsyncCompile
                 from PyTorchSimFrontend.extension_config import CONFIG_SRAM_BUFFER_PLAN, setup_logger
-                from Simulator.simulator import TOGSimulator
-                from PyTorchSimFrontend.extension_op import sparse_mm_dummy_stonne_outer
+                from PyTorchSimFrontend.extension_op import sparse_mm_compiler_fallback
                 from torch._inductor.select_algorithm import extern_kernels
 
                 # Configure logger for generated wrapper code
@@ -127,20 +125,14 @@ class ExtensionWrapperCodegen(wrapper.PythonWrapperCodegen):
             def sram_plan_prefix(buffer_name, buffer):
                 if CONFIG_SRAM_BUFFER_PLAN and (buffer_name not in CONFIG_SRAM_BUFFER_PLAN):
                     return
-                buffer_size = buffer.untyped_storage().size()
-                start = buffer.data_ptr()
-                end = start + buffer_size
-                # print(f'Alloc {{buffer_name}}(0x{{start:x}} ~ 0x{{end:x}})')
-                TOGSimulator.sram_alloc(buffer_name, [start, end])
+                # Compiler-generated wrappers do not manage simulator SRAM.
+                del buffer_name, buffer
 
             def sram_plan_postfix(buffer_name, buffer):
                 if CONFIG_SRAM_BUFFER_PLAN and (buffer_name not in CONFIG_SRAM_BUFFER_PLAN):
                     return
-                buffer_size = buffer.untyped_storage().size()
-                start = buffer.data_ptr()
-                end = start + buffer_size
-                # print(f'Dealloc {{buffer_name}}(0x{{start:x}} ~ 0x{{end:x}})')
-                TOGSimulator.sram_dealloc(buffer_name, [start, end])
+                # Scratchpad lifetime is encoded in compiler artifacts.
+                del buffer_name, buffer
 
             def host2device_memcopy(buffer):
                 pass
@@ -284,7 +276,6 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.indexed_buffer = IndentedBuffer()
         self.global_vars = IndentedBuffer()
         self.header = IndentedBuffer()
-        self.gem5_header = IndentedBuffer()
         self.header.writeline("#include <unistd.h>")
         self.header.writeline("#include <stdlib.h>")
         self.header.writeline("#include <stdio.h>")
@@ -867,7 +858,6 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         new_name = f"index_expr_{compute_vec_size}"
         if new_name not in self.global_vars_dict:
             self.header.writeline(f"{c_type} {new_name}_spad[{compute_vec_size*self.vector_lane}] __attribute__ ((section(\".spad\")));")
-            self.gem5_header.writeline(f"{c_type} {new_name}_spad[{compute_vec_size}] __attribute__((aligned(64)));")
             self.global_vars.writeline(f"memref.global @{new_name}_spad : {tile_shape}")
             self.global_vars_dict[new_name] = dict()
         sram_var = self.spad_cse.generate(self.spad_buffer, f"memref.get_global @{new_name}_spad : {tile_shape}")
@@ -981,7 +971,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             search_space.add(current_tile_sz)
 
             logger.debug(f"Auto-tune: Trying tile size: {list(current_tile_sz)}, vlane_stride: {self.kernel_group.tile_desc.vmap.vlane_stride}, split_axis: {self.kernel_group.tile_desc.vmap.vlane_split_axis}")
-            self._prepare_simulator_headers(src_code)
+            self._prepare_compiler_headers(src_code)
             bench_runner = self.run_bench(nodes, kernel_name, src_code)
             choices.append((bench_runner, src_code, meta_code, current_tile_sz, self.kernel_group.tile_desc.vmap.vlane_stride))
 
@@ -1021,7 +1011,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                     # Add this choice
                     search_space.add(current_tile_sz)
                     logger.debug(f"Auto-tune: Trying tile size: {list(current_tile_sz)}, vlane_stride: {self.kernel_group.tile_desc.vmap.vlane_stride}, split_axis: {self.kernel_group.tile_desc.vmap.vlane_split_axis}")
-                    self._prepare_simulator_headers(src_code)
+                    self._prepare_compiler_headers(src_code)
                     bench_runner = self.run_bench(nodes, kernel_name, src_code)
                     choices.append((bench_runner, src_code, meta_code, self.kernel_group.tile_desc.get_tile_size(), self.kernel_group.tile_desc.vmap.vlane_stride))
                     prevent_infinite_loop += 1
@@ -1126,30 +1116,38 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
 
     def codegen_nodes(self, nodes, kernel_name):
         src_code, meta_code = super().codegen_nodes(nodes, kernel_name)
-        self._prepare_simulator_headers(src_code)
-        if "autotune" in extension_config.codegen_mapping_strategy and extension_config.pytorchsim_timing_mode:
-            optimal_src_code, meta_code = self.autotune(nodes, kernel_name)[:2]
-            if optimal_src_code is not None:
-                return optimal_src_code, meta_code
+        self._prepare_compiler_headers(src_code)
+        if "autotune" in extension_config.codegen_mapping_strategy:
+            raise RuntimeError(
+                "Simulation-based autotuning is unavailable in compiler-only mode; "
+                "use heuristic or external-then-heuristic mapping"
+            )
         return src_code, meta_code
 
-    def _prepare_simulator_headers(self, src_code):
+    def _prepare_compiler_headers(self, src_code):
+        """Write compiler/linker metadata without simulator-specific headers."""
         from filelock import FileLock
 
         write_path = extension_codecache.get_write_path(src_code)
         os.makedirs(write_path, exist_ok=True)
-
-        spike_write_path = os.path.join(write_path, "global_var.h")
-        gem5_write_path = os.path.join(write_path, "gem5_global_var.h")
-
-        spad_end_symbol = "int spad_end[0] __attribute__ ((section(\".spad\")));\n"
-        spad_section_end_symbol = (
-            f"int spad_section_end[0] __attribute__ ((section(\".spad\"), aligned({self.spad_info['spad_size']*self.vector_lane})));"
+        compiler_header = os.path.join(write_path, "global_var.h")
+        spad_end_symbol = 'int spad_end[0] __attribute__ ((section(".spad")));\n'
+        spad_size = self.spad_info.get("spad_size", 0) if self.spad_info else 0
+        spad_section_end_symbol = ""
+        if spad_size:
+            spad_section_end_symbol = (
+                'int spad_section_end[0] __attribute__ '
+                f'((section(".spad"), aligned({spad_size * self.vector_lane})));\n'
+            )
+        lock = FileLock(
+            extension_codecache.get_lock_path(write_path),
+            timeout=extension_codecache.LOCK_TIMEOUT,
         )
-        lock = FileLock(extension_codecache.get_lock_path(write_path), timeout=extension_codecache.LOCK_TIMEOUT)
         with lock:
-            write_atomic(spike_write_path, self.header.getvalue() + spad_end_symbol + spad_section_end_symbol)
-            write_atomic(gem5_write_path, self.gem5_header.getvalue())
+            write_atomic(
+                compiler_header,
+                self.header.getvalue() + spad_end_symbol + spad_section_end_symbol,
+            )
 
     def get_arg_info(self, name):
         arg_info = dict()
@@ -1448,7 +1446,6 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             self.spadbuf_counter+=1
             # Add definition to header
             self.header.writeline(f"{c_type} {new_name}[{tile_size // self.vector_lane}] __attribute__ ((section(\".spad\")));")
-            self.gem5_header.writeline(f"{c_type} {new_name}[{tile_size}] __attribute__((aligned(64)));")
             self.global_vars.writeline(f"memref.global @{new_name} : {tile_shape}")
             self.global_vars_dict[dram_name][str(raw_index)] = new_name
         else:

@@ -13,7 +13,7 @@ class MLIRKernelCallerCodeGen():
     Generate C that calls the llvm kernel.
     """
 
-    def __init__(self, validation, arg_attributes, cycle_sim=False):
+    def __init__(self, validation, arg_attributes):
         super().__init__()
         self.code = IndentedBuffer()
         self.ending = ";"
@@ -28,7 +28,6 @@ class MLIRKernelCallerCodeGen():
         self.load_args = {}
         self.kernel_start_addr = ""
         self.kernel_end_addr = ""
-        self.cycle_sim = cycle_sim
 
     def get_argv_idx(self):
         self.arg_use_count += 1
@@ -42,7 +41,7 @@ class MLIRKernelCallerCodeGen():
             self.writeline("#include <unistd.h>")
             self.writeline('#include <string.h>')
             self.writeline('#include <fcntl.h>')
-        global_var_header = "gem5_global_var.h" if self.cycle_sim else "global_var.h"
+        global_var_header = "global_var.h"
         self.writeline(f"#include \"{global_var_header}\"")
 
     def is_in_arg(self, value):

@@ -580,7 +580,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
             buffer = IndentedBuffer()
             buffer.splice(src_code)
             src_code = buffer.getvalue()
-            self._prepare_simulator_headers(src_code)
+            self._prepare_compiler_headers(src_code)
         meta_code = self.meta_kernel()
         return src_code, meta_code
 
@@ -612,23 +612,19 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
 
         return src_code, meta_code
 
-    def _prepare_simulator_headers(self, src_code):
+    def _prepare_compiler_headers(self, src_code):
+        """Write compiler/linker metadata without simulator-specific headers."""
         from filelock import FileLock
-
-        spad_end_symbol = f"int spad_end[0] __attribute__ ((section(\".spad\")));\n"
-        spad_section_end_symbol = f"int spad_section_end[0] __attribute__ ((section(\".spad\"), aligned({self.spad_info['spad_size']*self.vector_lane})));"
-
+        spad_size = self.spad_info.get("spad_size", 0) if self.spad_info else 0
+        symbols = 'int spad_end[0] __attribute__ ((section(".spad")));\n'
+        if spad_size:
+            symbols += ('int spad_section_end[0] __attribute__ '
+                        f'((section(".spad"), aligned({spad_size * self.vector_lane})));\n')
         write_path = extension_codecache.get_write_path(src_code)
         os.makedirs(write_path, exist_ok=True)
-        spike_write_path = os.path.join(write_path, "global_var.h")
-        gem5_write_path = os.path.join(write_path, "gem5_global_var.h")
-
         lock = FileLock(extension_codecache.get_lock_path(write_path), timeout=extension_codecache.LOCK_TIMEOUT)
         with lock:
-            if not os.path.exists(spike_write_path):
-                write_atomic(spike_write_path, self.header.getvalue()+spad_end_symbol+spad_section_end_symbol)
-            if not os.path.exists(gem5_write_path):
-                write_atomic(gem5_write_path, self.gem5_header.getvalue())
+            write_atomic(os.path.join(write_path, "global_var.h"), self.header.getvalue() + symbols)
 
     def codegen_prologue_body(self):
         body = IndentedBuffer()

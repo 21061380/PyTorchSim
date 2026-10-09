@@ -26,15 +26,14 @@
 ARG PYTORCH_IMAGE=pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
 FROM ${PYTORCH_IMAGE}
 
-# Copied from Gem5 Docker file
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt -y update && \
     apt -y install build-essential git m4 zlib1g zlib1g-dev \
     libprotobuf-dev protobuf-compiler libprotoc-dev libgoogle-perftools-dev \
     python3-dev python-is-python3 libboost-all-dev \
     libhdf5-serial-dev python3-pydot libpng-dev libelf-dev pkg-config pip \
-    python3-venv black libssl-dev libasan5 libubsan1 curl device-tree-compiler wget ninja-build && \
-    pip install onnx matplotlib scikit-learn pydot tabulate flash_attn && pip install --user conan==1.56.0 cmake==3.26.4 && rm -rf /var/lib/apt/lists/*
+    python3-venv black libssl-dev libasan5 libubsan1 curl wget ninja-build && \
+    pip install --no-cache-dir pyyaml cmake==3.26.4 && rm -rf /var/lib/apt/lists/*
 
 # Build a pinned RISC-V bare-metal toolchain with the RVV intrinsic API
 # required by SLEEF 3.9.0. The official release is used instead of compiling
@@ -49,23 +48,12 @@ RUN test -n "${RISCV_TOOLCHAIN_SHA256}" && \
     test -x /workspace/riscv/bin/riscv64-unknown-elf-gcc && \
     rm -f /tmp/riscv-toolchain.tar.xz
 
-# Install torchsim dependency
-RUN apt install ninja-build && pip install onnx matplotlib && pip install --user conan==1.56.0 && pip install "transformers<4.44" && pip install diffusers==0.34.0
-
-# FlashAttention
-RUN python -m pip install --no-build-isolation flash-attn
-
-# Extra Python deps for YOLO/vision tests
-RUN python -m pip install -U pip setuptools wheel && \
-    python -m pip install --no-cache-dir --no-deps ultralytics && \
-    python -m pip install --no-cache-dir opencv-python-headless pandas seaborn
+# The compiler frontend needs no workload, simulator, or device-runtime packages.
 
 ENV RISCV=/workspace/riscv
 ENV PATH=$RISCV/bin:$PATH
 
 # Verify both the advertised intrinsic revision and a real RVV intrinsic.
-# Keep preprocessing in a file because x86 QEMU emulation has previously
-# crashed when this compiler was used in a pipeline.
 RUN set -eux; \
     riscv64-unknown-elf-gcc \
       -march=rv64gcv_zba_zbb_zbs -mabi=lp64d \
@@ -88,19 +76,10 @@ RUN set -eux; \
     grep -Eq 'vsetvli|vle32\\.v|vfadd\\.v' /tmp/rvv-intrinsic-smoke.s; \
     rm -f /tmp/riscv-macros.txt /tmp/rvv-intrinsic-smoke.c /tmp/rvv-intrinsic-smoke.s
 
-ARG GEM5_ASSET_ID
 ARG LLVM_ASSET_ID
-ARG SPIKE_ASSET_ID
 ARG SLEEF_COMMIT=906ca7512ee483296780a81a21b9ca715d40dfe1
 ENV PATH=$PATH:/root/.local/bin
 ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/opt/conda/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:$LD_LIBRARY_PATH
-
-# Download GEM5 for torchsim
-RUN curl -L -H "Accept: application/octet-stream" https://api.github.com/repos/PSAL-POSTECH/gem5/releases/assets/${GEM5_ASSET_ID} -o /tmp/gem5-release.tar.gz && \
-    mkdir -p /gem5 && \
-    tar -xzf /tmp/gem5-release.tar.gz -C /gem5 && \
-    rm /tmp/gem5-release.tar.gz
-ENV GEM5_PATH=/gem5/release/gem5.opt
 
 # Download LLVM RISC-V for torchsim
 RUN curl -L -H "Accept: application/octet-stream" https://api.github.com/repos/PSAL-POSTECH/llvm-project/releases/assets/${LLVM_ASSET_ID} -o /tmp/riscv-llvm-release.tar.gz && \
@@ -118,17 +97,3 @@ ENV TORCHSIM_SLEEF_SOURCE=/opt/sleef
 RUN git clone https://github.com/SLEEForg/SLEEF.git /opt/sleef && \
     cd /opt/sleef && git checkout --detach ${SLEEF_COMMIT} && \
     test "$(git rev-parse HEAD)" = "${SLEEF_COMMIT}"
-
-# Download Spike simulator
-RUN curl -L -H "Accept: application/octet-stream" https://api.github.com/repos/PSAL-POSTECH/riscv-isa-sim/releases/assets/${SPIKE_ASSET_ID} -o /tmp/spike-release.tar.gz && \
-    tar -xzf /tmp/spike-release.tar.gz -C / && rm /tmp/spike-release.tar.gz
-
-# Store SPIKE for TorchSim
-ENV PATH="/release/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/release/lib:${LD_LIBRARY_PATH}"
-ENV C_INCLUDE_PATH="/release/include:${C_INCLUDE_PATH}"
-
-# Install Proxy kernel
-RUN git clone https://github.com/riscv-software-src/riscv-pk.git && \
-     cd riscv-pk && git checkout 4f3debe4d04f56d31089c1c716a27e2d5245e9a1 && mkdir build && cd build && \
-    ../configure --prefix=$RISCV --host=riscv64-unknown-elf && make -j && make install

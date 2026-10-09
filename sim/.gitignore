@@ -1,5 +1,0 @@
-# Local simulator checkout, installations, and helper tools are generated artifacts.
-/riscv-isa-sim/
-/riscv-isa-sim-install/
-/spike-build-tools/
-/riscv-isa-sim-clean/

@@ -69,7 +69,7 @@ func.func @{{ KERNEL_NAME }}{{kernel.def_conv_kernel(inputs=[X, W, BIAS], output
               {{ kernel.def_dma_op("MVIN", "X", X_idx, X_tile_desc, subtile_size=[SUB_TILE_I_H, SUB_TILE_K_W, SUB_TILE_M, SUB_TILE_K], indent_size=14) }}
               {{ kernel.def_dma_op("MVIN", "W", W_idx, W_tile_desc, subtile_size=[SUB_TILE_K_H, SUB_TILE_K_W, SUB_TILE_K, SUB_TILE_N], indent_size=14) }}
               // Compute body part
-              affine.for %tile_k_h = 0 to {{ TILE_K_H }} { // loop order should be fixed for timing simulation. Do not change this order.
+              affine.for %tile_k_h = 0 to {{ TILE_K_H }} { // loop order is fixed for deterministic lowering. Do not change this order.
                 affine.for %tile_k_w = 0 to {{ TILE_K_W }} {
                   %offset_w = affine.apply #offset_w_map(%tile_k_h, %tile_k_w)
                   %W_buffer = memref.reinterpret_cast %weight_buffer to offset: [%offset_w], sizes: [{{ TILE_K }}, {{ TILE_N }}], strides: [{{ TILE_N }}, 1] : memref<{{ TILE_K_H }}x{{ TILE_K_W }}x{{ TILE_K }}x{{ TILE_N }}x{{DATA_STYPE}}, 1> to memref<{{ TILE_K }}x{{ TILE_N }}x{{DATA_STYPE}}, strided<[{{ TILE_N }}, 1], offset: ?>, 1>

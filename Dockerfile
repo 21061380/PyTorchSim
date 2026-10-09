@@ -5,12 +5,11 @@ FROM ${BASE_IMAGE}
 # Prepare PyTorchSim project
 COPY . /workspace/PyTorchSim
 
-RUN cd PyTorchSim/TOGSim && \
-    mkdir -p build && \
-    cd build && \
-    conan install .. --build=missing && \
-    cmake .. && \
-    make -j$(nproc)
+# Validate the compiler-only source contract without importing a device runtime.
+RUN python3 /workspace/PyTorchSim/tests/test_compiler_only.py
 
-RUN cd PyTorchSim/PyTorchSimDevice && \
-    python -m pip install --no-build-isolation -e .
+# The image contains compiler frontend code only. Runtime deployment components
+# are outside this image and are not built or imported here.
+
+# Install the Python frontend only; the optional device/runtime package is not
+# part of compiler-only image construction.
